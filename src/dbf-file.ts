@@ -3,6 +3,7 @@ import * as Bluebird from 'bluebird';
 var fs: any = Bluebird.promisifyAll(require('fs'));
 import * as _ from 'lodash';
 import * as moment from 'moment';
+import {MemoFile} from './memo-file';
 
 
 
@@ -48,6 +49,8 @@ export class DBFFile {
 
     /** Metadata for all fields defined in the DBF file. */
     fields: Field[] = null;
+    
+    memoFile: MemoFile = null;
 
 
     /** Append the specified records to this DBF file. */
@@ -94,14 +97,20 @@ var openDBF = async (path: string): Promise<DBFFile> => {
 
         // Read various properties from the header record.
         await (fs.readAsync(fd, buffer, 0, 32, 0));
-        var fileVersion = buffer.readInt8(0);
-        var recordCount = buffer.readInt32LE(4);
-        var headerLength = buffer.readInt16LE(8);
-        var recordLength = buffer.readInt16LE(10);
+        var fileVersion = buffer.readUInt8(0);
+        var recordCount = buffer.readUInt32LE(4);
+        var headerLength = buffer.readUInt16LE(8);
+        var recordLength = buffer.readUInt16LE(10);
 
         // Ensure the file version is a supported one.
-        assert(fileVersion === 0x03, `File '${path}' has unknown/unsupported dBase version: ${fileVersion}.`);
+        assert(fileVersion === 0x03 || fileVersion === 0x8b, `File '${path}' has unknown/unsupported dBase version: ${fileVersion}.`);
 
+        // Check for presence of DBT file, and parse it if needed
+        if (fileVersion === 0x8b || fileVersion === 0x83) {
+            var memoPath = path.substr(0, path.lastIndexOf(".")) + ".DBT";
+            var memoFile = new MemoFile(memoPath);
+        }
+        
         // Parse all field descriptors.
         var fields: Field[] = [];
         while (headerLength > 32 + fields.length * 32) {
@@ -130,6 +139,7 @@ var openDBF = async (path: string): Promise<DBFFile> => {
         result.path = path;
         result.recordCount = recordCount;
         result.fields = fields;
+        result.memoFile = memoFile;
         result._recordsRead = 0;
         result._headerLength = headerLength;
         result._recordLength = recordLength;
@@ -379,8 +389,12 @@ var readRecordsFromDBF = async (dbf: DBFFile, maxRows: number) => {
                             offset += field.size;
                             break;
                         case 'N': // Number
+                        case 'M': // Memo
                             while (len > 0 && buffer[offset] === 0x20) ++offset, --len;
                             value = len > 0 ? parseFloat(substr(offset, len)) : null;
+                            if (field.type === 'M' && !isNaN(value)) {
+                                value = dbf.memoFile.getBlockContentAt(value);
+                            }
                             offset += len;
                             break;
                         case 'L': // Boolean
