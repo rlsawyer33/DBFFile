@@ -2,18 +2,21 @@
 
 ### Summary
 
-Read and write .dbf (dBase III) files in Node.js:
+Read and write .dbf (dBase IV) files in Node.js:
 
-- Supports `C` (string) , `N` (numeric) , `I` (integer) , `L` (logical) and `D` (date) field types
+- Supports `C` (string) , `N` (numeric) , `I` (integer) , `L` (logical), `D` (date), and `M` field types
 - Can open an existing .dbf file
   - Can access all field descriptors
   - Can access total record count
   - Can read records in arbitrary-sized batches
   - Supports very large files
+  - Can access memo fields from the associated memo file
 - Can create a new .dbf file
   - Can use field descriptors from a hash of from another instance
+  - If memo fields are present it will create the memo file, if necessary
 - Can append records to an existing .dbf file
   - Supports very large files
+  - Appending a memo field will append it to the memo file and set the memo field (block index) in the .dbf file
 - All operations are asyncronous and return a promise
 
 ### Installation
@@ -42,12 +45,13 @@ var DBFFile = require('dbffile');
 
 var fieldDescriptors = [
     { name: 'fname', type: 'C', size: 255 },
-    { name: 'lname', type: 'C', size: 255 }
+    { name: 'lname', type: 'C', size: 255 },
+    { name: 'facts', type: 'M', size: 10 }
 ];
 
 var rows = [
-    { fname: 'Joe', lname: 'Bloggs' },
-    { fname: 'Mary', lname: 'Smith' }
+    { fname: 'Joe', lname: 'Bloggs', facts: 'Born and raised in Someplace, Alabama' },
+    { fname: 'Mary', lname: 'Smith', memo: 'Loves knitting and crocheting' },
 ];
 
 DBFFile.create('[full path to .dbf file]', fieldDescriptors)
