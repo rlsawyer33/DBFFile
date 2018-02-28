@@ -1,6 +1,6 @@
 {
-  "name": "dbffile",
-  "version": "0.7.3",
+  "name": "dbf4file",
+  "version": "0.1.0",
   "description": "",
   "main": "built/dbf-file.js",
   "typings": "built/dbf-file.d.ts",
@@ -13,23 +13,23 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/paypac/DBFFile.git"
+    "url": "https://github.com/rlsawyer33/DBFFile.git"
   },
   "keywords": [
     "dbf",
     "dBase",
-    "dBase III"
+    "dBase IV"
   ],
   "author": {
-    "name": "Troy Gerwien",
-    "email": "yortus@gmail.com",
-    "url": "http://github.com/yortus/"
+    "name": "Rick Sawyer",
+    "email": "sawyer.rick@gmail.com",
+    "url": "http://github.com/rlsawyer33/"
   },
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/paypac/DBFFile/issues"
+    "url": "https://github.com/rlsawyer33/DBFFile/issues"
   },
-  "homepage": "https://github.com/paypac/DBFFile",
+  "homepage": "https://github.com/rlsawyer33/DBFFile",
   "dependencies": {
     "@types/bluebird": "^3.5.5",
     "@types/lodash": "^4.14.66",
