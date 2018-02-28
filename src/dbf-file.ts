@@ -6,15 +6,9 @@ import * as moment from 'moment';
 import {MemoFile} from './memo-file';
 
 
-
-
-
 // For information about the dBase III file format, see:
 // http://www.dbf2002.com/dbf-file-format.html
 // http://www.dbase.com/KnowledgeBase/int/db7_file_fmt.htm
-
-
-
 
 
 /** Open an existing DBF file. */
@@ -22,30 +16,20 @@ export function open(path: string) {
     return openDBF(path);
 }
 
-
-
-
-
 /** Create a new DBF file with no records. */
 export function create(path: string, fields: Field[]) {
     return createDBF(path, fields);
 }
 
 
-
-
-
 /** Represents a DBF file. */
 export class DBFFile {
-
 
     /** Full path to the DBF file. */
     path: string = null;
 
-
     /** Total number of records in the DBF file. */
     recordCount: number = null;
-
 
     /** Metadata for all fields defined in the DBF file. */
     fields: Field[] = null;
@@ -57,7 +41,6 @@ export class DBFFile {
     append(records: any[]) {
         return appendToDBF(this, records);
     }
-
 
     /** Read a subset of records from this DBF file. */
     readRecords(maxRows = 10000000) {
@@ -71,10 +54,6 @@ export class DBFFile {
     _recordLength: number;
 }
 
-
-
-
-
 /** Structural typing for DBF field metadata. */
 export interface Field {
     name: string;
@@ -82,9 +61,6 @@ export interface Field {
     size: number;
     decs: number;
 }
-
-
-
 
 
 //-------------------- Private implementation starts here --------------------
@@ -107,7 +83,7 @@ var openDBF = async (path: string): Promise<DBFFile> => {
 
         // Check for presence of DBT file, and parse it if needed
         if (fileVersion === 0x8b || fileVersion === 0x83) {
-            var memoPath = path.substr(0, path.lastIndexOf(".")) + ".DBT";
+            var memoPath = path.substr(0, path.lastIndexOf(".")) + ".dbt";
             var memoFile = new MemoFile(memoPath);
         }
         
@@ -152,28 +128,35 @@ var openDBF = async (path: string): Promise<DBFFile> => {
     }
 };
 
-
-
-
-
 var createDBF = async (path: string, fields: Field[]): Promise<DBFFile> => {
     try {
 
         // Validate the field metadata.
         validateFields(fields);
+        
+        var includesMemo = fieldsIncludeMemo(fields);
 
         // Create the file and create a buffer to write through.
         var fd = await (fs.openAsync(path, 'wx'));
         var buffer = new Buffer(32);
-
+        
+        if (includesMemo) {
+            var memoPath = path.substr(0, path.lastIndexOf(".")) + ".dbt";
+            var memoFile = new MemoFile(memoPath);
+        }
+        
         // Write the header structure up to the field descriptors.
-        buffer.writeUInt8(0x03, 0x00);                          // Version (set to dBase III)
+        if (includesMemo) {
+            buffer.writeUInt8(0x8b, 0x00);                      // Version (set to dBase IV with memo)
+        } else {
+            buffer.writeUInt8(0x03, 0x00);                      // Version (set to dBase III)
+        }
         var now = new Date();                                   // date of last update (YYMMDD)
-        buffer.writeUInt8(now.getFullYear() - 1900, 0x01);      // YY (year minus 1900)
-        buffer.writeUInt8(now.getMonth(), 0x02);                // MM
+        buffer.writeUInt8(now.getFullYear() % 100, 0x01);       // YY
+        buffer.writeUInt8(now.getMonth() + 1, 0x02);            // MM
         buffer.writeUInt8(now.getDate(), 0x03);                 // DD
-        buffer.writeInt32LE(0, 0x04);                           // Number of records (set to zero)
-        var headerLength = 34 + (fields.length * 32);
+        buffer.writeUInt32LE(0x01, 0x04);                       // Number of records (set to zero)
+        var headerLength = 33 + (fields.length * 32);           // 32 (header flags) + 1 (header terminator) + field descriptors
         buffer.writeUInt16LE(headerLength, 0x08);               // Length of header structure
         var recordLength = calcRecordLength(fields)
         buffer.writeUInt16LE(recordLength, 0x0A);               // Length of each record
@@ -205,17 +188,16 @@ var createDBF = async (path: string, fields: Field[]): Promise<DBFFile> => {
             await (fs.writeAsync(fd, buffer, 0, 32, 32 + i * 32));
         }
 
-        // Write the header terminator and EOF marker.
+        // Write the header terminator.
         buffer.writeUInt8(0x0D, 0);                             // Header terminator
-        buffer.writeUInt8(0x00, 1);                             // Null byte (unnecessary but common, accounted for in header length)
-        buffer.writeUInt8(0x1A, 2);                             // EOF marker
-        await (fs.writeAsync(fd, buffer, 0, 3, 32 + fields.length * 32));
+        await (fs.writeAsync(fd, buffer, 0, 1, 32 + fields.length * 32));
 
         // Return a new DBFFile instance.
         var result = new DBFFile();
         result.path = path;
         result.recordCount = 0;
         result.fields = _.cloneDeep(fields);
+        result.memoFile = memoFile;
         result._recordsRead = 0;
         result._headerLength = headerLength;
         result._recordLength = recordLength;
@@ -227,10 +209,6 @@ var createDBF = async (path: string, fields: Field[]): Promise<DBFFile> => {
         if (fd) await (fs.closeAsync(fd));
     }
 };
-
-
-
-
 
 var appendToDBF = async (dbf: DBFFile, records: any[]): Promise<DBFFile> => {
     try {
@@ -262,7 +240,7 @@ var appendToDBF = async (dbf: DBFFile, records: any[]): Promise<DBFFile> => {
 
                 // Use raw data if provided in the record.
                 var raw = records[i]._raw && records[i]._raw[field.name];
-                if (raw && Buffer.isBuffer(raw) && raw.length === field.size) {
+                if (raw && Buffer.isBuffer(raw) && raw.length === field.size && field.type !== 'M') {
                     raw.copy(buffer, offset);
                     offset += field.size;
                     continue;
@@ -280,6 +258,11 @@ var appendToDBF = async (dbf: DBFFile, records: any[]): Promise<DBFFile> => {
                         }
                         break;
 
+                    case 'M': // Memo
+                        var nextBlock = dbf.memoFile.getNextBlockNumber();
+                        dbf.memoFile.writeNextBlock(value);
+                        // Fallthrough on purpose to write the number of the memoblock
+                        value = nextBlock;
                     case 'N': // Number
                         value = value.toString();
                         value = value.slice(0, field.size);
@@ -302,7 +285,7 @@ var appendToDBF = async (dbf: DBFFile, records: any[]): Promise<DBFFile> => {
                         buffer.writeInt32LE(value, offset);
                         offset += field.size;
                         break;
-
+                        
                     default:
                         throw new Error("Type '" + field.type + "' is not supported");
                 }
@@ -310,10 +293,6 @@ var appendToDBF = async (dbf: DBFFile, records: any[]): Promise<DBFFile> => {
             await (fs.writeAsync(fd, buffer, 0, recordLength, currentPosition));
             currentPosition += recordLength;
         }
-
-        // Write a new EOF marker.
-        buffer.writeUInt8(0x1A, 0);
-        await (fs.writeAsync(fd, buffer, 0, 1, currentPosition));
 
         // Update the record count in the file and in the DBFFile instance.
         dbf.recordCount += records.length;
@@ -329,10 +308,6 @@ var appendToDBF = async (dbf: DBFFile, records: any[]): Promise<DBFFile> => {
         if (fd) await (fs.closeAsync(fd));
     }
 };
-
-
-
-
 
 var readRecordsFromDBF = async (dbf: DBFFile, maxRows: number) => {
     try {
@@ -434,8 +409,15 @@ var readRecordsFromDBF = async (dbf: DBFFile, maxRows: number) => {
 };
 
 
+function fieldsIncludeMemo(fields: Field[]): boolean {
+    let result: boolean = false;
 
-
+    fields.forEach(field => {
+        if (field.type === 'M') result = true;
+    });
+    
+    return result;
+}
 
 function validateFields(fields: Field[]): void {
     if (fields.length > 2046) throw new Error('Too many fields (maximum is 2046)');
@@ -447,20 +429,17 @@ function validateFields(fields: Field[]): void {
         if (decs && !_.isNumber(decs)) throw new Error('Decs must be null, or a number');
         if (name.length < 1) throw new Error("Field name '" + name + "' is too short (minimum is 1 char)");
         if (name.length > 10) throw new Error("Field name '" + name + "' is too long (maximum is 10 chars)");
-        if (['C', 'N', 'L', 'D', 'I'].indexOf(type) === -1) throw new Error("Type '" + type + "' is not supported");
+        if (['C', 'N', 'L', 'D', 'I', 'M'].indexOf(type) === -1) throw new Error("Type '" + type + "' is not supported");
         if (size < 1) throw new Error('Field size is too small (minimum is 1)');
         if (type === 'C' && size > 255) throw new Error('Field size is too large (maximum is 255)');
         if (type === 'N' && size > 20) throw new Error('Field size is too large (maximum is 20)');
         if (type === 'L' && size !== 1) throw new Error('Invalid field size (must be 1)');
         if (type === 'D' && size !== 8) throw new Error('Invalid field size (must be 8)');
         if (type === 'I' && size !== 4) throw new Error('Invalid field size (must be 4)');
+        if (type === 'M' && size !== 10) throw new Error('Invalid field size (must be 10)');
         if (decs && decs > 15) throw new Error('Decimal count is too large (maximum is 15)');
     }
 }
-
-
-
-
 
 function validateRecord(fields: Field[], record: {}): void {
     for (var i = 0; i < fields.length; ++i) {
@@ -483,10 +462,6 @@ function validateRecord(fields: Field[], record: {}): void {
         }
     }
 }
-
-
-
-
 
 function calcRecordLength(fields: Field[]): number {
     var len = 1; // 'Record deleted flag' adds one byte
